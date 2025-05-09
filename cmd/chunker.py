@@ -1,68 +1,67 @@
-import aiofiles
-import asyncio
-import humanize
-import pathlib
-from pkg.atomics import atomic_counter
-import timeit
 import argparse
+import asyncio
+import pathlib
+import sys
+import timeit
 
-async def process_chunks(file_path, chunk_size=8192):
-    """Let's asynchronously read the content of a file and process it in chunks."""
-    try:
-        # Metrics
-        counter = atomic_counter.AtomicCounter()
-        total_bytes = atomic_counter.AtomicCounter()
+import humanize
 
-        # Process the content of a file as chunked data.
-        async with aiofiles.open(file_path, 'rb') as f:
-            while True:
-                chunk = await f.read(chunk_size)
-                if not chunk:
-                    break
+from pkg.fileio.async_file_chunker import AsyncFileChunker
 
-                # Process the chunk of data from the file.
-                chunk_len = len(chunk)
-                await process_chunk(chunk, chunk_len)
 
-                # Update and report processing metrics.
-                total_bytes.increment(chunk_len)
-                counter.increment()
-                print(f"Processed[{humanize.intcomma(counter.get()):>4}]:{humanize.intcomma(chunk_len):>6}B / {humanize.intcomma(total_bytes.get()):>10}B")
+async def validate_file_path(file_path):
+    """
+    Validates whether the provided file path exists and is indeed a file. This
+    function checks that the given path corresponds to an existing file. If the
+    path does not exist or is not associated with a file, the appropriate
+    exception is raised.
 
-    except Exception as e:
-        print(f"ERROR: {e}")
-
-async def process_chunk(chunk, chunk_len):
-    """Let's simulate some asynchronous manipulation of the chunk's data."""
-    await asyncio.sleep(0.1)
-
-async def input_validation(args):
-    try:
-        args.file_path.exists()
-    except FileNotFoundError:
-        print(f"File '{args.file_path}' does not exist")
-    try:
-        args.file_path.is_file()
-    except FileNotFoundError:
-        print(f"'{args.file_path}' is not a file")
+    :param file_path: The path to the file that needs validation
+    :type file_path: pathlib.Path
+    :raises FileNotFoundError: If the file does not exist
+    :raises ValueError: If the path is not a file
+    :return: None
+    """
+    if not file_path.exists():
+        raise FileNotFoundError(f"File '{file_path}' does not exist")
+    if not file_path.is_file():
+        raise ValueError(f"'{file_path}' is not a file")
 
 
 ################################################################################
 #                             M  A  I  N  L  I  N  E                           #
 ################################################################################
 async def main():
+    """
+    Main entry point for processing a file in byte chunks asynchronously.
 
-    parser = argparse.ArgumentParser(description="CHUNKER: File processing in BITES!")
+    This function sets up argument parsing for file path input and initializes the
+    chunking process using the AsyncFileChunker class. It also measures the time
+    taken for processing and outputs the elapsed time in microseconds. In case of
+    errors, it gracefully handles expected exceptions such as `FileNotFoundError`
+    and `ValueError`.
+
+    :raises FileNotFoundError: If the specified file does not exist.
+    :raises ValueError: If the file path is invalid or cannot be processed.
+    :return: None.
+    """
+    parser = argparse.ArgumentParser(description="CHUNKER: File processing in BYTES!")
     parser.add_argument("file_path", type=pathlib.Path, help="The file to process")
     args = parser.parse_args()
-    await input_validation(args)
 
-    started = timeit.default_timer()
-    await process_chunks(args.file_path)
-    ended = timeit.default_timer()
+    try:
+        await validate_file_path(args.file_path)
+        processor = AsyncFileChunker()
 
-    print(f"Elapsed: {humanize.scientific(round((ended - started) * 1e6, 3))} µs")
+        start_time = timeit.default_timer()
+        await processor.process_file(args.file_path)
+        end_time = timeit.default_timer()
 
-# Launch the app.
+        print(f"Elapsed: {humanize.scientific(round((end_time - start_time) * 1e6, 3))} µs")
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     asyncio.run(main())
